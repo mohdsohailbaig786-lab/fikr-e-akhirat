@@ -17,24 +17,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-on:
-  schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch:
-permissions:
-  contents: write
-  pages: write
-  id-token: write
-concurrency:
-  group: youtube-video-sync
-  cancel-in-progress: false
-jobs:
-  sync:
-    environment: github-pages
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
         with:
           ref: main
       - uses: actions/setup-python@v5
@@ -138,4 +120,4 @@ jobs:
         with:
           path: _site
       - uses: actions/deploy-pages@v4
-        if: steps.commit.outputs.changed == 'true'run-name: 
+        if: steps.commit.outputs.changed == 'true'
