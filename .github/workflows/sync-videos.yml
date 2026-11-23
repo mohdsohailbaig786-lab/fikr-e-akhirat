@@ -1,0 +1,123 @@
+name: Sync YouTube videos
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: youtube-video-sync
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Append new public videos safely
+        shell: bash
+        run: |
+          python - <<'PY'
+          import html
+          import re
+          import os
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+          from urllib.parse import urlparse, parse_qs
+          import xml.etree.ElementTree as ET
+          
+          path = Path('index.html')
+          before = path.read_bytes()
+          text = before.decode('utf-8')
+          def require(ok, message):
+              if not ok:
+                  raise SystemExit('Safety stop: ' + message)
+          
+          def video_id(href):
+              u = urlparse(html.unescape(href))
+              require(u.scheme == 'https' and u.netloc in ('youtube.com', 'www.youtube.com'), 'unexpected video URL')
+              vid = u.path.split('/')[-1] if u.path.startswith('/shorts/') else parse_qs(u.query).get('v', [''])[0] if u.path == '/watch' else ''
+              require(re.fullmatch(r'[A-Za-z0-9_-]{11}', vid), 'invalid video ID')
+              return vid
+          
+          prefix = '<section id="videos">'
+          start = '<div class="cards">'
+          end = '</div></section>'
+          require(text.count(prefix) == 1 and text.count(start) == 1, 'expected unique static video list')
+          a = text.index(start, text.index(prefix)) + len(start)
+          b = text.index(end, a)
+          body = text[a:b]
+          pattern = re.compile(r'<a class="card" href="([^"]+)" target="_blank" rel="noopener noreferrer"><div class="number"><span>\s*(\d+) / SHORT</span><span class="play" aria-hidden="true">▶</span></div><h3>([^<]*)</h3><span class="watch">YouTube par dekhein ↗</span></a>')
+          cards = list(pattern.finditer(body))
+          require(bool(cards), 'no existing cards')
+          require(not pattern.sub('', body).strip(), 'unexpected card markup or container contents')
+          require(len(re.findall(r'<a\b[^>]*class="card"', text)) == len(cards), 'cards outside expected container')
+          ids = [video_id(c[1]) for c in cards]
+          numbers = [int(c[2]) for c in cards]
+          require(len(set(ids)) == len(ids) and numbers == list(range(1, max(numbers) + 1)), 'duplicate IDs or nonsequential numbers')
+          url = 'https://www.youtube.com/feeds/videos.xml?channel_id=UCZhEwbnuGY0Xh9Uo_6fK0VA'
+          with urlopen(Request(url, headers={'User-Agent': 'Fikr-e-Akhirat-video-sync/1.0'}), timeout=60) as response:
+              root = ET.fromstring(response.read())
+          ns = {'a': 'http://www.w3.org/2005/Atom', 'yt': 'http://www.youtube.com/xml/schemas/2015'}
+          require(root.tag == '{http://www.w3.org/2005/Atom}feed', 'not an Atom feed')
+          require(root.findtext('yt:channelId', namespaces=ns) == 'UCZhEwbnuGY0Xh9Uo_6fK0VA', 'wrong channel')
+          seen = set(ids)
+          new = []
+          for entry in reversed(root.findall('a:entry', ns)):
+              vid = entry.findtext('yt:videoId', namespaces=ns)
+              title = entry.findtext('a:title', namespaces=ns)
+              require(vid and re.fullmatch(r'[A-Za-z0-9_-]{11}', vid) and title, 'malformed feed entry')
+              if vid not in seen:
+                  seen.add(vid)
+                  number = max(numbers) + len(new) + 1
+                  new.append(f'<a class="card" href="https://www.youtube.com/watch?v={vid}" target="_blank" rel="noopener noreferrer"><div class="number"><span>{number:02d} / SHORT</span><span class="play" aria-hidden="true">▶</span></div><h3>{html.escape(title, quote=True)}</h3><span class="watch">YouTube par dekhein ↗</span></a>')
+                  print(f'Adding {number:02d}: {vid} - {title}')
+          if not new:
+              print(f'No new videos; {len(ids)} existing cards unchanged.')
+              raise SystemExit(0)
+          insert = a + cards[-1].end()
+          after = text[:insert] + ''.join(new) + text[insert:]
+          final_cards = list(pattern.finditer(after[a:after.index(end, a)]))
+          final_ids = [video_id(c[1]) for c in final_cards]
+          require(final_ids[:len(ids)] == ids and len(final_ids) == len(set(final_ids)), 'existing IDs lost or duplicates')
+          require(all(c[0] in after for c in cards), 'existing cards changed')
+          require(after[:insert] == text[:insert] and after[insert + len(''.join(new)):] == text[insert:], 'non-append change')
+          require(path.read_bytes() == before, 'source changed during sync')
+          path.write_bytes(after.encode('utf-8'))
+          print(f'Appended {len(new)} video(s); all {len(ids)} existing cards preserved.')
+          PY
+      - name: Commit only when videos changed
+        id: commit
+        shell: bash
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- index.html
+          git commit -m "Add new video(s) from YouTube feed"
+          git push origin HEAD:main
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+      # GITHUB_TOKEN commits do not trigger the normal Pages build.
+      # Deploy the updated static page explicitly; no settings are changed.
+      - name: Prepare static site
+        if: steps.commit.outputs.changed == 'true'
+        run: |
+          mkdir -p _site
+          cp index.html _site/index.html
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.commit.outputs.changed == 'true'
+        with:
+          path: _site
+      - uses: actions/deploy-pages@v4
+        if: steps.commit.outputs.changed == 'true'
+        
