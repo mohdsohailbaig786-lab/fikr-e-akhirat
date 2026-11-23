@@ -17,6 +17,24 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: youtube-video-sync
+  cancel-in-progress: false
+jobs:
+  sync:
+    environment: github-pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
         with:
           ref: main
       - uses: actions/setup-python@v5
@@ -68,7 +86,7 @@ jobs:
               root = ET.fromstring(response.read())
           ns = {'a': 'http://www.w3.org/2005/Atom', 'yt': 'http://www.youtube.com/xml/schemas/2015'}
           require(root.tag == '{http://www.w3.org/2005/Atom}feed', 'not an Atom feed')
-          require(root.findtext('yt:channelId', namespaces=ns) == 'UCZhEwbnuGY0Xh9Uo_6fK0VA', 'wrong channel')
+          require(root.findtext('yt:channelId', namespaces=ns) in ('UCZhEwbnuGY0Xh9Uo_6fK0VA', 'ZhEwbnuGY0Xh9Uo_6fK0VA'), 'wrong channel')
           seen = set(ids)
           new = []
           for entry in reversed(root.findall('a:entry', ns)):
@@ -120,5 +138,4 @@ jobs:
         with:
           path: _site
       - uses: actions/deploy-pages@v4
-        if: steps.commit.outputs.changed == 'true'
-        
+        if: steps.commit.outputs.changed == 'true'run-name: 
