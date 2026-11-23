@@ -12,6 +12,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   sync:
+    environment: github-pages
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
