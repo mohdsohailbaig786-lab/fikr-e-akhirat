@@ -111,13 +111,13 @@ jobs:
       # GITHUB_TOKEN commits do not trigger the normal Pages build.
       # Deploy the updated static page explicitly; no settings are changed.
       - name: Prepare static site
-        if: steps.commit.outputs.changed == 'true'
+        if: steps.commit.outputs.changed == 'true' || github.event_name == 'workflow_dispatch' || github.run_attempt > 1
         run: |
           mkdir -p _site
           cp index.html sitemap.xml _site/
       - uses: actions/upload-pages-artifact@v3
-        if: steps.commit.outputs.changed == 'true'
+        if: steps.commit.outputs.changed == 'true' || github.event_name == 'workflow_dispatch' || github.run_attempt > 1
         with:
           path: _site
       - uses: actions/deploy-pages@v4
-        if: steps.commit.outputs.changed == 'true'
+        if: steps.commit.outputs.changed == 'true' || github.event_name == 'workflow_dispatch' || github.run_attempt > 1
